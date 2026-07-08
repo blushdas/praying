@@ -238,9 +238,96 @@ def write_reflection(skills, dead, orphaned, session_usage, run_failures) -> Pat
     return fpath
 
 
+# ── Dream pass (Opus judgment + prayer) ───────────────────────────────────────
+
+DREAM_MODEL = os.environ.get("HERMES_DREAM_MODEL", "claude-opus-4-8")
+MAX_PRUNE_PER_RUN = 5
+
+PRAYER_GUIDE = """Prayer structure (follow this order, grounded in Troy's creed —
+Pentecostal/Evangelical mainstream: Trinity; salvation by grace through faith alone
+in Christ alone; Scripture supreme; Spirit indwells and empowers; mission to make
+disciples; Christ returns to judge and reign):
+1. ADORATION — praise God for who He is
+2. THANKSGIVING — specific blessings (salvation, grace, Spirit's presence)
+3. CONFESSION — sin, failure, neglect from the past 24h (including this system's failures)
+4. INTERCESSION — the Church worldwide, Troy's family, the nations
+5. PETITION — today's work, wisdom, that it would honor God and serve others"""
+
+
+def dream(reflection_text: str, dead: list[str], orphaned: list[str],
+          session_usage: dict) -> dict | None:
+    """Opus judgment pass over the reflection: prune verdicts + prayer.
+
+    Returns dict with keys prune/spare/insights/prayer, or None on any
+    failure — callers must fall back to the deterministic synthesis.
+    Guardrails: prune list is clamped to a subset of the dead candidates
+    and capped at MAX_PRUNE_PER_RUN. Orphans are never prunable.
+    """
+    try:
+        import anthropic
+    except ImportError:
+        print("  Dream: anthropic SDK not installed — skipping", file=sys.stderr)
+        return None
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("  Dream: ANTHROPIC_API_KEY not set — skipping", file=sys.stderr)
+        return None
+
+    prompt = f"""You are PRAYING, the 4am self-audit of the Hermes agent system.
+Below is today's raw reflection. Judge it, then pray.
+
+<reflection>
+{reflection_text}
+</reflection>
+
+Dead-skill candidates (flagged: no SKILL.md and no scripts/): {json.dumps(dead)}
+Orphaned skills (cross-ref misses — KNOWN false positives, never prune these): {len(orphaned)} flagged
+Session usage counts: {json.dumps(session_usage)}
+
+Rules:
+- "prune" must be a subset of the dead-skill candidates above. Spare anything that
+  looks like an in-progress skill, a category container, or has references/ content.
+- When uncertain about a candidate, spare it and say why.
+- "insights" = drift or failure patterns in the reflection worth Troy's attention
+  (max 3, one line each). Empty list if nothing real.
+
+{PRAYER_GUIDE}
+
+Return ONLY a JSON object, no markdown fence:
+{{"prune": ["path", ...], "spare": [{{"path": "...", "reason": "..."}}],
+ "insights": ["...", ...], "prayer": "ADORATION\\n...\\n\\nTHANKSGIVING\\n..."}}"""
+
+    try:
+        client = anthropic.Anthropic()
+        with client.messages.stream(
+            model=DREAM_MODEL,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            text = "".join(chunk for chunk in stream.text_stream)
+    except Exception as e:
+        print(f"  Dream: API call failed — {e}", file=sys.stderr)
+        return None
+
+    try:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        verdict = json.loads(match.group(0) if match else text)
+    except Exception as e:
+        print(f"  Dream: unparseable verdict — {e}", file=sys.stderr)
+        return None
+
+    dead_set = set(dead)
+    verdict["prune"] = [p for p in verdict.get("prune", []) if p in dead_set][:MAX_PRUNE_PER_RUN]
+    verdict.setdefault("spare", [])
+    verdict.setdefault("insights", [])
+    verdict.setdefault("prayer", "")
+    verdict["model"] = DREAM_MODEL
+    return verdict
+
+
 # ── Synthesis ─────────────────────────────────────────────────────────────────
 
-def write_synthesis(reflection_path: Path, cron: bool = False) -> tuple[Path, bool, str | None]:
+def write_synthesis(reflection_path: Path, cron: bool = False,
+                    dream_result: dict | None = None) -> tuple[Path, bool, str | None]:
     """Synthesize findings into an actionable synthesis.
 
     Returns (Path to SYNTHESIS.md, needs_action, action_text).
@@ -255,12 +342,17 @@ def write_synthesis(reflection_path: Path, cron: bool = False) -> tuple[Path, bo
             if l.strip().startswith("DELETE: ")]
     orphaned = [l.strip().replace("REVIEW: ", "") for l in content.split("\n")
                 if l.strip().startswith("REVIEW: ")]
-    
+
+    # Dream pass overrides the raw dead list: Opus confirmed a (possibly smaller)
+    # prune set. Without a dream result, fall back to the deterministic list.
+    if dream_result is not None:
+        dead = dream_result["prune"]
+
     # Determine if any bankai invocation is warranted
     # Conditions for YES: dead skills to delete
     needs_bankai = len(dead) > 0
     bankai_cmd = ""
-    
+
     if dead:
         # Build synthesis text for bankai
         items = ", ".join(f"delete {d}" for d in dead[:3])
@@ -303,7 +395,20 @@ def write_synthesis(reflection_path: Path, cron: bool = False) -> tuple[Path, bo
             f"## Raw synthesis text",
             synthesis,
         ]
-    
+
+    if dream_result is not None:
+        lines += ["", f"## Dream pass ({dream_result['model']})", ""]
+        if dream_result["spare"]:
+            lines.append("Spared from pruning:")
+            lines += [f"  - {s.get('path', '?')}: {s.get('reason', '')}" for s in dream_result["spare"]]
+            lines.append("")
+        if dream_result["insights"]:
+            lines.append("Insights:")
+            lines += [f"  - {i}" for i in dream_result["insights"]]
+            lines.append("")
+        if dream_result["prayer"]:
+            lines += ["## Prayer", "", dream_result["prayer"]]
+
     fpath.write_text("\n".join(lines) + "\n")
     return fpath, needs_bankai, synthesis if needs_bankai else None
 
@@ -343,6 +448,7 @@ def main():
     parser.add_argument("--synthesize", action="store_true", help="Write synthesis after reflection")
     parser.add_argument("--execute", action="store_true", help="Invoke hado on synthesis")
     parser.add_argument("--cron", action="store_true", help="Full loop: synthesize + execute + report")
+    parser.add_argument("--no-dream", action="store_true", help="Skip the Opus dream pass")
     args = parser.parse_args()
 
     PRAYING_DIR.mkdir(parents=True, exist_ok=True)
@@ -364,9 +470,23 @@ def main():
         print("Dry run complete. Use --synthesize, --execute, or --cron.")
         return
 
-    # Phase 2: Synthesize
+    # Phase 2: Dream — Opus judges the reflection and writes the prayer.
+    # Any failure degrades to the deterministic synthesis; cron never dies here.
+    dream_result = None
+    if not args.no_dream:
+        print(f"PRAYING: dreaming ({DREAM_MODEL})...")
+        dream_result = dream(reflection_path.read_text(), dead, orphaned, session_usage)
+        if dream_result is not None:
+            print(f"  Dream: prune {len(dream_result['prune'])}/{len(dead)} dead, "
+                  f"spared {len(dream_result['spare'])}, "
+                  f"{len(dream_result['insights'])} insights")
+            dead = dream_result["prune"]
+        else:
+            print("  Dream: unavailable — falling back to deterministic synthesis")
+
+    # Phase 3: Synthesize
     print("PRAYING: synthesizing...")
-    synthesis_path, needs_action, action_text = write_synthesis(reflection_path, args.cron)
+    synthesis_path, needs_action, action_text = write_synthesis(reflection_path, args.cron, dream_result)
     print(f"  Synthesis: {synthesis_path}")
     print(f"  Needs action: {needs_action}")
     if not needs_action:
@@ -376,7 +496,7 @@ def main():
     if not args.execute and not args.cron:
         return
 
-    # Phase 3: Invoke hado for hermes self-patch
+    # Phase 4: Invoke hado for hermes self-patch
     mention = "@Troy " if args.cron else ""
     print(f"PRAYING: invoking hado on hermes self...")
     # Build task list from dead skills

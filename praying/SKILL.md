@@ -11,7 +11,7 @@ description: |
   
   Flow: HERMES (enumerate + audit) → REFLECTION.md → HADO (rm -rf dead skills)
   bankai only fires if PRAYING finds code-level issues needing GitHub PR.
-version: 1.1.0
+version: 1.2.0
 metadata:
   hermes:
     tags: [self-healing, self-audit, pipeline]
@@ -29,9 +29,17 @@ HERMES (praying.py --synthesize)
   → session usage: grep sessions for skill/tool mentions
   → write ~/.hermes/praying/YYYY-MM-DD-REFLECTION.md
 
+DREAM (Opus 4.8 — claude-opus-4-8)
+  → reads REFLECTION.md + dead candidates + session usage
+  → judges: which dead flags are truly safe to prune, which to spare (and why)
+  → surfaces insights (drift/failure patterns, max 3)
+  → writes the prayer (ADORATION → PETITION, grounded in Troy's creed)
+  → guardrails: prune ⊆ dead candidates, max 5/run, orphans never prunable
+  → any failure (no SDK, no key, bad JSON) → deterministic fallback, cron never dies
+
 HADO (praying.py --execute)
-  → reads REFLECTION.md
-  → dead skills: rm -rf (deletion = hermes self-patch, no frontier model needed)
+  → reads dream-confirmed prune list (or raw dead list on fallback)
+  → dead skills: rm -rf (deletion = hermes self-patch)
   → orphaned skills: review only (false positives — cross-ref too strict)
 
 SYNTHESIS (praying.py --synthesize output)
@@ -39,9 +47,20 @@ SYNTHESIS (praying.py --synthesize output)
   → if YES: routing guidance (what to fix and how)
   → if dead > 0: "invoke hado" is the action
   → if no findings: "synthesize says NO"
-
-No Opus, no Codex split. PRAYING is Hermes self-search + hado deletion.
+  → dream section appended: spared skills + insights + prayer
 ```
+
+## Dream pass (added Jul 7 2026)
+
+The dream pass is the judgment layer between reflection and execution. Since PRAYING
+runs unsupervised at 4am, Opus 4.8 reviews every prune before hado deletes anything.
+
+- Model: `claude-opus-4-8` (override with `HERMES_DREAM_MODEL` env var)
+- Requires: `anthropic` SDK in the venv + `ANTHROPIC_API_KEY` in cron env
+- Skip: `--no-dream` flag (reverts to deterministic dead-list pruning)
+- Cost: one streamed call per day, ~4k max output tokens
+- Safety: model can only VETO or CONFIRM candidates the Python audit flagged —
+  it can never add new deletion targets. Cap 5 prunes/run.
 
 ## Usage
 
