@@ -39,7 +39,7 @@ SKILLS_INDEX = CACHE_DIR   / "skills-index.json"
 DREAMS_OUT   = CACHE_DIR   / "dreams-output.json"
 
 PYTHON_VENV  = "~/.hermes/hermes-agent/venv/bin/python3.11"
-OPUS_MODEL   = os.environ.get("HERMES_DREAM_MODEL", "claude-opus-4-8")
+OPUS_MODEL   = os.environ.get("HERMES_DREAM_MODEL", "claude-fable-5")
 
 # ── session reading ────────────────────────────────────────────────────────────
 

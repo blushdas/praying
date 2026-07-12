@@ -2,17 +2,17 @@
 name: hermes-dreams
 description: |
   Hermes weekly Fable 5 memory curation — the "dream pass."
-  Runs every Friday. Uses Opus 4.8 to analyze the past week's sessions via
+  Runs every Friday. Uses Fable 5 to analyze the past week's sessions via
   Fable 10-pass thinking, surface contradictions/stale facts, and reorganize
   skill memory. Writes curated output to ~/.hermes/memory/WEEKLY-DREAMS.md
   which Hermes reads on startup.
 
   Flow:
-    HERMES (enumerate recent sessions) → Opus 4.8 (Fable 10-pass analysis)
+    HERMES (enumerate recent sessions) → Fable 5 (Fable 10-pass analysis)
     → CURATION + SKILL GRAPH + LEDGER → prune skills + write memory
 
-  Output: ~80K chars of session data → Opus → skill graph (prune/keep/merge)
-  Cost: ~1 Opus call/week ≈ cents.
+  Output: ~80K chars of session data → Fable 5 → skill graph (prune/keep/merge)
+  Cost: ~1 Fable 5 call/week ≈ cents.
 
   Runs on: Hermes host ( Railway). Sessions live at ~/.hermes/sessions/.
   NOT this Mac — this Mac has stale sessions only.
